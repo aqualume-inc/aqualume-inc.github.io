@@ -4,7 +4,7 @@ on:
     inputs:
       country:
         description: 'One EU country code, or auto for daily rotation'
-        default: AT
+        default: NL
         type: choice
         options: [AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IT, LV, LT, LU, MT, NL, PL, PT, RO, SK, SI, ES, SE, auto]
   push:
@@ -43,7 +43,7 @@ jobs:
         id: country
         continue-on-error: true
         env:
-          COUNTRY: ${{ inputs.country || (github.event_name == 'schedule' && 'auto') || 'AT' }}
+          COUNTRY: ${{ inputs.country || (github.event_name == 'schedule' && 'auto') || 'NL' }}
           PYTHONUNBUFFERED: '1'
         run: python scripts/import_eu.py --country "$COUNTRY"
       - name: Record import outcome
