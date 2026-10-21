@@ -1,0 +1,84 @@
+name: EU water imports and 3D setup
+on:
+  workflow_dispatch:
+    inputs:
+      country:
+        description: 'One EU country code, or auto for daily rotation'
+        default: AT
+        type: choice
+        options: [AT, BE, BG, HR, CY, CZ, DK, EE, FI, FR, DE, GR, HU, IE, IT, LV, LT, LU, MT, NL, PL, PT, RO, SK, SI, ES, SE, auto]
+  push:
+    branches: [main]
+    paths: ['eu-3d.mjs', 'scripts/import_eu.py', '.github/workflows/eu-3d.yml']
+  schedule:
+    - cron: '47 4 * * *'
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: water-data
+  cancel-in-progress: false
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate source syntax
+        run: |
+          python -m py_compile scripts/import_eu.py
+          node --check eu-3d.mjs
+      - name: Install OSM processing tools
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y osmium-tool
+          pip install 'osmium>=4,<5'
+      - name: Import one country
+        id: country
+        continue-on-error: true
+        env:
+          COUNTRY: ${{ inputs.country || (github.event_name == 'schedule' && 'auto') || 'AT' }}
+          PYTHONUNBUFFERED: '1'
+        run: python scripts/import_eu.py --country "$COUNTRY"
+      - name: Record import outcome
+        env:
+          OUTCOME: ${{ steps.country.outcome }}
+        run: |
+          echo "Country import outcome: $OUTCOME. Only countries with actual data files are ready." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$OUTCOME" != 'success' ]; then
+            echo '::warning::Country import failed. Previous datasets preserved; pending countries remain unavailable.'
+          fi
+      - name: Integrate optional 3D and country selector
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          p = Path('index.html')
+          text = p.read_text()
+          if 'src="./eu-3d.mjs"' not in text:
+              text = text.replace('</body>', '<script type="module" src="./eu-3d.mjs"></script></body>')
+          p.write_text(text)
+          p = Path('sw.js')
+          text = re.sub(r"const CACHE='[^']+';", "const CACHE='aqualume-eu3d-v8';", p.read_text(), count=1)
+          text = text.replace("'./glass.js'];", "'./glass.js','./eu-3d.mjs','./data/eu/index.json'];")
+          p.write_text(text)
+          PY
+      - name: Commit generated files
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html sw.js config/eu-countries.json data/eu
+          if ! git diff --cached --quiet; then
+            git commit -m 'Publish optional 3D view and available EU water snapshots'
+            git push origin HEAD:main
+          fi
+      - name: Request Pages build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST repos/${{ github.repository }}/pages/builds
