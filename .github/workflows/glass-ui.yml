@@ -1,0 +1,54 @@
+name: Install glass map upgrade
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['glass.js', 'glass.css', '.github/workflows/glass-ui.yml']
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: water-data
+  cancel-in-progress: false
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate JavaScript
+        run: node --check glass.js
+      - name: Install interface and offline assets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('index.html')
+          html = p.read_text()
+          if 'href="./glass.css"' not in html:
+              html = html.replace('</head>', '<link rel="stylesheet" href="./glass.css"></head>')
+          if 'src="./glass.js"' not in html:
+              html = html.replace('</body>', '<script src="./glass.js"></script></body>')
+          html = html.replace('Aqualume 1.2', 'Aqualume 1.3')
+          p.write_text(html)
+          for name in ['sw.js', 'scripts/update_water.py']:
+              p = Path(name)
+              text = p.read_text().replace('aqualume-static-v3', 'aqualume-glass-v4')
+              text = text.replace("'./data/tirol-water.json'];", "'./data/tirol-water.json','./glass.css','./glass.js'];")
+              p.write_text(text)
+          PY
+      - name: Commit interface integration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html sw.js scripts/update_water.py
+          if ! git diff --cached --quiet; then
+            git commit -m 'Integrate Aqualume glass interface and offline assets'
+            git push origin HEAD:main
+          fi
+      - name: Request Pages build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST repos/${{ github.repository }}/pages/builds
