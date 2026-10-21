@@ -16,14 +16,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Validate JavaScript
-        run: node --check glass.js
-      - name: Install interface and offline assets
+      - name: Install location help and bottom layout
         run: |
           python - <<'PY'
+          import re
           from pathlib import Path
           p = Path('index.html')
           html = p.read_text()
@@ -31,21 +32,48 @@ jobs:
               html = html.replace('</head>', '<link rel="stylesheet" href="./glass.css"></head>')
           if 'src="./glass.js"' not in html:
               html = html.replace('</body>', '<script src="./glass.js"></script></body>')
-          html = html.replace('Aqualume 1.2', 'Aqualume 1.3')
+          html = html.replace('Aqualume 1.3', 'Aqualume 1.4')
           p.write_text(html)
-          for name in ['sw.js', 'scripts/update_water.py']:
-              p = Path(name)
-              text = p.read_text().replace('aqualume-static-v3', 'aqualume-glass-v4')
-              text = text.replace("'./data/tirol-water.json'];", "'./data/tirol-water.json','./glass.css','./glass.js'];")
-              p.write_text(text)
+          p = Path('glass.js')
+          script = p.read_text()
+          if 'gps-help-v1' not in script:
+              script += '''
+          (()=>{
+          if(!window.L||!map||document.getElementById('gps-help-v1'))return;
+          const panel=document.querySelector('.layout>.panel:last-child'),dock=document.querySelector('.glass-dock');
+          if(panel&&dock){const stack=document.createElement('div');stack.className='bottom-stack';stack.setAttribute('aria-label','Kartenansichten und Ortsliste');document.body.append(stack);stack.append(dock,panel)}
+          const gps=document.querySelector('.gps-state'),help=document.createElement('dialog');help.id='gps-help-v1';
+          help.innerHTML='<h2>Standort prüfen</h2><p id="gps-permission-state">Berechtigung noch nicht geprüft.</p><p>Wenn der Browser den Zugriff blockiert, kann Aqualume ihn nicht selbst freigeben. Prüfe die Standortberechtigung dieser Website und die Ortungsdienste für deinen Browser. Danach erneut prüfen.</p><p>Ohne Freigabe kannst du weiter einen Ort suchen und Wasserstellen auswählen. Es wird kein genauer Standort erfunden.</p><button id="gps-recheck">Berechtigung erneut prüfen</button><button id="gps-close">Schließen</button>';document.body.append(help);
+          let permission=null,shown=false;
+          async function check(){let state='unbekannt';if(!window.isSecureContext)state='unsicher';else if(!navigator.geolocation)state='nicht unterstützt';else if(navigator.permissions&&navigator.permissions.query){try{permission=await navigator.permissions.query({name:'geolocation'});state=permission.state;permission.onchange=()=>check()}catch{}}
+          const messages={denied:'Browserfreigabe blockiert. Website- und Systemeinstellungen prüfen.',granted:'Browserfreigabe erteilt. Mit Mein Standort eine neue Position anfragen.',prompt:'Der Browser kann beim nächsten Standortaufruf nachfragen.',unbekannt:'Dieser Browser meldet keinen Berechtigungsstatus. Standort kann direkt angefragt werden.',unsicher:'Standort benötigt eine sichere HTTPS-Verbindung.','nicht unterstützt':'Dieser Browser unterstützt keine Standortabfrage.'};help.querySelector('#gps-permission-state').textContent=messages[state]||state;return state}
+          const button=document.createElement('button');button.textContent='Standort-Hilfe';button.onclick=()=>{check();help.showModal()};document.querySelector('.tools').append(button);
+          help.querySelector('#gps-close').onclick=()=>help.close();help.querySelector('#gps-recheck').onclick=async()=>{const state=await check();if(state==='granted'||state==='prompt'||state==='unbekannt'){help.close();document.getElementById('near').click()}};
+          for(const id of ['near','live']){const element=document.getElementById(id),original=element.onclick;element.onclick=async e=>{if(element.textContent.toLowerCase().includes('stopp')){original.call(element,e);return}if(gps)gps.textContent='Standortberechtigung wird geprüft …';const state=await check();if(['denied','unsicher','nicht unterstützt'].includes(state)){if(gps)gps.textContent=help.querySelector('#gps-permission-state').textContent;help.showModal();return}original.call(element,e)}}
+          if(gps)new MutationObserver(()=>{if(!shown&&gps.textContent.includes('verweigert')){shown=true;check();if(!help.open)help.showModal()}}).observe(gps,{childList:true,characterData:true,subtree:true});
+          })();
+          '''
+          p.write_text(script)
+          p = Path('glass.css')
+          css = p.read_text()
+          if 'bottom-stack' not in css:
+              css += '\n.glass-app .bottom-stack{position:fixed;right:16px;bottom:calc(env(safe-area-inset-bottom) + 16px);width:min(390px,calc(100vw - 32px));z-index:1100;display:flex;flex-direction:column;gap:10px;pointer-events:none}.glass-app .bottom-stack>*{pointer-events:auto}.glass-app .bottom-stack>.glass-dock{position:static;left:auto;bottom:auto;transform:none;align-self:center}.glass-app .bottom-stack>.panel{position:static;width:100%;border-radius:24px;background:rgba(14,20,24,.48);border:1px solid #ffffff80;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}.glass-app .layout>.panel{position:static!important;width:auto!important;border:0!important;background:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}.glass-app .bottom-stack .list-open #results{max-height:28vh}.glass-app.solid-glass .bottom-stack>.panel{background:#152127}@media(prefers-reduced-transparency:reduce),(prefers-contrast:more){.glass-app .bottom-stack>.panel{background:#152127;backdrop-filter:none;-webkit-backdrop-filter:none}}'
+          p.write_text(css)
+          p = Path('sw.js')
+          text = re.sub(r"const CACHE='[^']+';", "const CACHE='aqualume-location-v7';", p.read_text(), count=1)
+          p.write_text(text)
           PY
-      - name: Commit interface integration
+      - name: Validate updated JavaScript
+        run: |
+          node --check glass.js
+          node --check sw.js
+      - name: Commit web update
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html sw.js scripts/update_water.py
+          git add index.html glass.js glass.css sw.js
           if ! git diff --cached --quiet; then
-            git commit -m 'Integrate Aqualume glass interface and offline assets'
+            git commit -m 'Add location permission diagnostics and stack bottom UI'
             git push origin HEAD:main
           fi
       - name: Request Pages build
