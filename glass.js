@@ -27,3 +27,18 @@ const dock=document.createElement('nav');dock.className='glass-dock';dock.setAtt
 $('saved').onclick=()=>{const data=cacheRead('aqualume-spots')||cacheRead('aqualume-snapshot');if(!data){say('Keine gespeicherten Orte.');return}spots=data.spots||[];draw();if(spots.length)map.fitBounds(spots.map(p=>[p.lat,p.lon]),{maxZoom:15});say('Gespeicherte Karteneinträge – möglicherweise veraltet')};
 requestAnimationFrame(()=>{map.invalidateSize();load()});
 })();
+
+(()=>{
+if(!window.L||!map||document.getElementById('gps-help-v1'))return;
+const panel=document.querySelector('.layout>.panel:last-child'),dock=document.querySelector('.glass-dock');
+if(panel&&dock){const stack=document.createElement('div');stack.className='bottom-stack';stack.setAttribute('aria-label','Kartenansichten und Ortsliste');document.body.append(stack);stack.append(dock,panel)}
+const gps=document.querySelector('.gps-state'),help=document.createElement('dialog');help.id='gps-help-v1';
+help.innerHTML='<h2>Standort prüfen</h2><p id="gps-permission-state">Berechtigung noch nicht geprüft.</p><p>Wenn der Browser den Zugriff blockiert, kann Aqualume ihn nicht selbst freigeben. Prüfe die Standortberechtigung dieser Website und die Ortungsdienste für deinen Browser. Danach erneut prüfen.</p><p>Ohne Freigabe kannst du weiter einen Ort suchen und Wasserstellen auswählen. Es wird kein genauer Standort erfunden.</p><button id="gps-recheck">Berechtigung erneut prüfen</button><button id="gps-close">Schließen</button>';document.body.append(help);
+let permission=null,shown=false;
+async function check(){let state='unbekannt';if(!window.isSecureContext)state='unsicher';else if(!navigator.geolocation)state='nicht unterstützt';else if(navigator.permissions&&navigator.permissions.query){try{permission=await navigator.permissions.query({name:'geolocation'});state=permission.state;permission.onchange=()=>check()}catch{}}
+const messages={denied:'Browserfreigabe blockiert. Website- und Systemeinstellungen prüfen.',granted:'Browserfreigabe erteilt. Mit Mein Standort eine neue Position anfragen.',prompt:'Der Browser kann beim nächsten Standortaufruf nachfragen.',unbekannt:'Dieser Browser meldet keinen Berechtigungsstatus. Standort kann direkt angefragt werden.',unsicher:'Standort benötigt eine sichere HTTPS-Verbindung.','nicht unterstützt':'Dieser Browser unterstützt keine Standortabfrage.'};help.querySelector('#gps-permission-state').textContent=messages[state]||state;return state}
+const button=document.createElement('button');button.textContent='Standort-Hilfe';button.onclick=()=>{check();help.showModal()};document.querySelector('.tools').append(button);
+help.querySelector('#gps-close').onclick=()=>help.close();help.querySelector('#gps-recheck').onclick=async()=>{const state=await check();if(state==='granted'||state==='prompt'||state==='unbekannt'){help.close();document.getElementById('near').click()}};
+for(const id of ['near','live']){const element=document.getElementById(id),original=element.onclick;element.onclick=async e=>{if(element.textContent.toLowerCase().includes('stopp')){original.call(element,e);return}if(gps)gps.textContent='Standortberechtigung wird geprüft …';const state=await check();if(['denied','unsicher','nicht unterstützt'].includes(state)){if(gps)gps.textContent=help.querySelector('#gps-permission-state').textContent;help.showModal();return}original.call(element,e)}}
+if(gps)new MutationObserver(()=>{if(!shown&&gps.textContent.includes('verweigert')){shown=true;check();if(!help.open)help.showModal()}}).observe(gps,{childList:true,characterData:true,subtree:true});
+})();
