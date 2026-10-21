@@ -62,8 +62,8 @@ zoom = '''const zoomButtons=L.Control.extend({options:{position:'topleft'},onAdd
 if 'const zoomButtons=' not in html:
     html = html.replace('layer=L.layerGroup().addTo(map);', zoom + 'layer=L.layerGroup().addTo(map);')
 
-worker = '''const CACHE='aqualume-static-v3';
-const ASSETS=['./','./index.html','./manifest.webmanifest','./icon.svg','./data/tirol-water.json'];
+worker = '''const CACHE='aqualume-glass-v4';
+const ASSETS=['./','./index.html','./manifest.webmanifest','./icon.svg','./data/tirol-water.json','./glass.css','./glass.js'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('aqualume-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url),local=u.origin===self.location.origin,lib=u.origin==='https://unpkg.com'&&u.pathname.startsWith('/leaflet@1.9.4/');if(!local&&!lib)return;const onlineFirst=local&&(e.request.mode==='navigate'||u.pathname.endsWith('.html')||u.pathname.endsWith('.json'));e.respondWith((async()=>{const cache=await caches.open(CACHE);if(onlineFirst){try{const r=await fetch(e.request,{cache:'no-cache'});if(!r.ok)throw Error('HTTP '+r.status);await cache.put(e.request,r.clone());return r}catch{const saved=await cache.match(e.request)||(e.request.mode==='navigate'?await cache.match('./index.html'):null);return saved||Response.error()}}const saved=await cache.match(e.request);if(saved)return saved;const r=await fetch(e.request);if(r.ok)await cache.put(e.request,r.clone());return r})())});
