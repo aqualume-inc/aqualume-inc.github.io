@@ -1,76 +1,96 @@
-import json, math, re, time
+import json, math, os, time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 
-query = '[out:json][timeout:90];area["ISO3166-2"="AT-7"]->.tirol;(nwr["amenity"="drinking_water"](area.tirol);nwr["drinking_water"~"^(yes|designated)$"](area.tirol);nwr["drinking_water:refill"="yes"](area.tirol););out center tags;'
-endpoints = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']
-spots = None
-errors = []
-for endpoint in endpoints:
+FILE = Path('data/tirol-water.json')
+STATUS = Path('data/update-status.json')
+ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter']
+QUERY = '[out:json][timeout:90];area["ISO3166-2"="AT-7"]->.tirol;(nwr["amenity"="drinking_water"](area.tirol);nwr["drinking_water"~"^(yes|designated)$"](area.tirol);nwr["drinking_water:refill"="yes"](area.tirol););out center tags;'
+
+def normalize(payload):
+    if payload.get('remark'):
+        raise ValueError(str(payload['remark'])[:300])
+    if not isinstance(payload.get('elements'), list):
+        raise ValueError('Missing elements array')
+    result = {}
+    for item in payload['elements']:
+        if not isinstance(item, dict) or item.get('type') not in ('node', 'way', 'relation') or not isinstance(item.get('id'), int):
+            continue
+        center = item.get('center') or {}
+        lat, lon = item.get('lat', center.get('lat')), item.get('lon', center.get('lon'))
+        tags = item.get('tags') or {}
+        if not isinstance(tags, dict) or not all(type(v) in (int, float) and math.isfinite(v) for v in (lat, lon)):
+            continue
+        if not (46 <= lat <= 49 and 9 <= lon <= 14) or tags.get('drinking_water') == 'no' or tags.get('access') in ('private', 'no'):
+            continue
+        key = str(item['type']) + '/' + str(item['id'])
+        result[key] = {'id': item['id'], 'type': item['type'], 'lat': lat, 'lon': lon, 'tags': tags}
+    return sorted(result.values(), key=lambda p: (p['type'], p['id']))
+
+def previous():
     try:
-        req = Request(endpoint, data=urlencode({'data': query}).encode(), headers={'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'Aqualume-Tirol-Snapshot/1.2 (https://aqualume-inc.github.io/)'})
-        with urlopen(req, timeout=125) as response:
-            payload = json.load(response)
-        if payload.get('remark'):
-            raise ValueError(payload['remark'])
-        if not isinstance(payload.get('elements'), list):
-            raise ValueError('Missing elements')
-        unique = {}
-        for item in payload['elements']:
-            lat = item.get('lat', item.get('center', {}).get('lat'))
-            lon = item.get('lon', item.get('center', {}).get('lon'))
-            tags = item.get('tags', {})
-            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)) or not math.isfinite(lat) or not math.isfinite(lon):
-                continue
-            if not (46 <= lat <= 49 and 9 <= lon <= 14):
-                continue
-            if tags.get('drinking_water') == 'no' or tags.get('access') in ('private', 'no'):
-                continue
-            key = str(item['type']) + '/' + str(item['id'])
-            unique[key] = {'id': item['id'], 'type': item['type'], 'lat': lat, 'lon': lon, 'tags': tags}
-        if len(unique) < 10:
-            raise ValueError('Suspiciously empty result: refusing to replace snapshot')
-        spots = sorted(unique.values(), key=lambda p: (p['type'], p['id']))
-        break
-    except Exception as exc:
-        errors.append(endpoint + ': ' + str(exc))
-        time.sleep(3)
-if spots is None:
-    raise SystemExit('Snapshot refresh failed; existing files preserved. ' + '; '.join(errors))
+        data = json.loads(FILE.read_text())
+        if not isinstance(data.get('generated_at'), str) or not isinstance(data.get('spots'), list):
+            return None
+        payload = {'elements': data['spots']}
+        valid = normalize(payload)
+        if len(valid) < 10 or len(valid) != len(data['spots']):
+            return None
+        return data
+    except (OSError, ValueError, TypeError):
+        return None
 
-html_path = Path('index.html')
-html = html_path.read_text()
-replacement = '''async function load(){
- if(!map)return;const id=++serial;if(controller)controller.abort();controller=new AbortController();
- say('Tiroler Wasserstellen werden geladen …');
- let snapshot;
- try{snapshot=await request('./data/tirol-water.json',{signal:controller.signal},15000);if(!Array.isArray(snapshot.spots)||!snapshot.spots.length)throw Error('Leere Datendatei');cacheWrite('aqualume-snapshot',snapshot)}
- catch(e){if(id!==serial)return;snapshot=cacheRead('aqualume-snapshot');if(!snapshot){say('Datendatei noch nicht verfügbar. GitHub-Datenlauf prüfen oder gespeicherte Orte öffnen.');return}}
- if(id!==serial)return;const b=map.getBounds();spots=snapshot.spots.filter(p=>b.contains([p.lat,p.lon]));draw();
- const date=new Date(snapshot.generated_at).toLocaleString('de-AT');
- say(spots.length+' Wasserstellen in dieser Ansicht · '+snapshot.spots.length+' in Tirol · OSM-Datenabruf '+date+' · Keine aktuelle Qualitätsprüfung');
-}
-function update'''
-html, count = re.subn(r'async function load\(\)\{.*?\nfunction update', lambda _: replacement, html, count=1, flags=re.S)
-if count != 1:
-    raise SystemExit('Unexpected application format; no files changed')
-html = html.replace('Aqualume 1.1', 'Aqualume 1.2')
-html = html.replace("L.map('map').setView", "L.map('map',{zoomControl:false}).setView")
-zoom = '''const zoomButtons=L.Control.extend({options:{position:'topleft'},onAdd:function(){const box=L.DomUtil.create('div','leaflet-bar');for(const pair of [[1,'+','Karte vergrößern'],[-1,'−','Karte verkleinern']]){const btn=document.createElement('button');btn.type='button';btn.textContent=pair[1];btn.setAttribute('aria-label',pair[2]);btn.style.cssText='display:block;width:36px;height:36px;min-height:36px;padding:0;border-radius:0;background:white;color:black;font-size:24px';btn.onclick=()=>map.setZoom(map.getZoom()+pair[0]);box.append(btn)}L.DomEvent.disableClickPropagation(box);return box}});map.addControl(new zoomButtons());'''
-if 'const zoomButtons=' not in html:
-    html = html.replace('layer=L.layerGroup().addTo(map);', zoom + 'layer=L.layerGroup().addTo(map);')
+def atomic_write(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix('.tmp')
+    temp.write_text(json.dumps(data, ensure_ascii=False, separators=(',', ':')))
+    temp.replace(path)
 
-worker = '''const CACHE='aqualume-glass-v4';
-const ASSETS=['./','./index.html','./manifest.webmanifest','./icon.svg','./data/tirol-water.json','./glass.css','./glass.js'];
-self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
-self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('aqualume-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url),local=u.origin===self.location.origin,lib=u.origin==='https://unpkg.com'&&u.pathname.startsWith('/leaflet@1.9.4/');if(!local&&!lib)return;const onlineFirst=local&&(e.request.mode==='navigate'||u.pathname.endsWith('.html')||u.pathname.endsWith('.json'));e.respondWith((async()=>{const cache=await caches.open(CACHE);if(onlineFirst){try{const r=await fetch(e.request,{cache:'no-cache'});if(!r.ok)throw Error('HTTP '+r.status);await cache.put(e.request,r.clone());return r}catch{const saved=await cache.match(e.request)||(e.request.mode==='navigate'?await cache.match('./index.html'):null);return saved||Response.error()}}const saved=await cache.match(e.request);if(saved)return saved;const r=await fetch(e.request);if(r.ok)await cache.put(e.request,r.clone());return r})())});
-'''
-output = {'generated_at': datetime.now(timezone.utc).isoformat(), 'source': 'OpenStreetMap contributors', 'license': 'ODbL-1.0', 'source_url': 'https://www.openstreetmap.org/copyright', 'coverage': 'Tirol, Austria (OSM area AT-7)', 'quality_note': 'Map records, not current water-quality certification. Access may be unknown.', 'spots': spots}
-Path('data').mkdir(exist_ok=True)
-Path('data/tirol-water.json').write_text(json.dumps(output, ensure_ascii=False, separators=(',', ':')))
-html_path.write_text(html)
-Path('sw.js').write_text(worker)
-print('Prepared', len(spots), 'OSM water points; app and worker patched. Local format checks are not on-site verification.')
+def main():
+    old = previous()
+    errors = []
+    spots = None
+    for attempt in range(2):
+        for endpoint in ENDPOINTS:
+            started = time.monotonic()
+            print('Fetching', endpoint, 'attempt', attempt + 1, flush=True)
+            try:
+                req = Request(endpoint, data=urlencode({'data': QUERY}).encode(), headers={'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8', 'User-Agent': 'Aqualume-Water-Snapshot/1.3 (https://aqualume-inc.github.io/)'})
+                with urlopen(req, timeout=120) as response:
+                    candidate = normalize(json.load(response))
+                minimum = max(10, int(len(old['spots']) * 0.6)) if old else 10
+                if len(candidate) < minimum:
+                    raise ValueError('Suspicious result: ' + str(len(candidate)) + ' records; minimum ' + str(minimum))
+                spots = candidate
+                print('Validated', len(spots), 'records in', round(time.monotonic() - started, 1), 'seconds', flush=True)
+                break
+            except Exception as exc:
+                message = endpoint + ' attempt ' + str(attempt + 1) + ': ' + type(exc).__name__ + ': ' + str(exc)[:300]
+                print(message, flush=True)
+                errors.append(message)
+                time.sleep(5)
+        if spots is not None:
+            break
+        if attempt == 0:
+            time.sleep(15)
+    now = datetime.now(timezone.utc).isoformat()
+    if spots is not None:
+        data = {'generated_at': now, 'source': 'OpenStreetMap contributors', 'license': 'ODbL-1.0', 'source_url': 'https://www.openstreetmap.org/copyright', 'coverage': 'Tirol, Austria (OSM area AT-7)', 'quality_note': 'Map records, not current water-quality certification. Access may be unknown.', 'spots': spots}
+        atomic_write(FILE, data)
+        state = {'checked_at': now, 'refreshed': True, 'using_previous': False, 'data_generated_at': now, 'count': len(spots), 'errors': errors}
+        heading = 'Water data refreshed'
+    else:
+        state = {'checked_at': now, 'refreshed': False, 'using_previous': bool(old), 'data_generated_at': old['generated_at'] if old else None, 'count': len(old['spots']) if old else 0, 'errors': errors}
+        heading = 'Refresh failed; previous data preserved' if old else 'Refresh failed; no valid dataset available'
+        print('::warning::' + heading, flush=True)
+    atomic_write(STATUS, state)
+    if os.getenv('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+            summary.write('## ' + heading + '\n\n' + 'Records: ' + str(state['count']) + '\n\nData timestamp: ' + str(state['data_generated_at']) + '\n\n' + '\n'.join('- ' + e for e in errors) + '\n')
+    if spots is None and old is None:
+        raise SystemExit('No valid snapshot; publication blocked. See data/update-status.json and job logs.')
+
+if __name__ == '__main__':
+    main()

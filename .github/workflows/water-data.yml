@@ -18,21 +18,38 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Fetch and validate data; patch application
+      - name: Validate updater syntax
+        run: python -m py_compile scripts/update_water.py
+      - name: Fetch and validate water data
+        env:
+          PYTHONUNBUFFERED: '1'
         run: python scripts/update_water.py
-      - name: Commit data and application changes
+      - name: Upload diagnostic status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: water-refresh-status
+          path: data/update-status.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Commit water data and status only
+        id: commit
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/tirol-water.json index.html sw.js
+          git add data/tirol-water.json data/update-status.json
           if ! git diff --cached --quiet; then
-            git commit -m 'Update verified-format OSM snapshot and static-data application'
+            git commit -m 'Refresh OSM water snapshot and explicit update status'
             git push origin HEAD:main
+            echo 'changed=true' >> "$GITHUB_OUTPUT"
           fi
       - name: Request Pages rebuild
+        if: steps.commit.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api --method POST repos/${{ github.repository }}/pages/builds
