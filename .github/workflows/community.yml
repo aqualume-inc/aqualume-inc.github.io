@@ -1,0 +1,92 @@
+name: Validate and integrate community reporting
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['community.js', 'data/community.json', 'images/community/**', '.github/ISSUE_TEMPLATE/fountain.yml', '.github/workflows/community.yml']
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: water-data
+  cancel-in-progress: false
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate JavaScript and community data
+        run: |
+          node --check community.js
+          pip install 'Pillow>=11,<13' PyYAML
+          python - <<'PY'
+          import json, math, re
+          from datetime import date, timedelta
+          from pathlib import Path
+          from PIL import Image
+          import yaml
+          form = yaml.safe_load(Path('.github/ISSUE_TEMPLATE/fountain.yml').read_text())
+          photo = next(f for f in form['body'] if f.get('id') == 'photo')
+          assert photo['type'] == 'upload' and photo['validations']['required'] is True
+          data = json.loads(Path('data/community.json').read_text())
+          assert isinstance(data['places'], list)
+          seen = set()
+          root = Path('images/community').resolve()
+          for r in data['places']:
+              assert r['approved'] is True and type(r['issue']) is int and r['issue'] > 0
+              assert r['issue'] not in seen
+              seen.add(r['issue'])
+              assert r['country'] in ['AT', 'NL'] and isinstance(r['name'], str) and 0 < len(r['name']) <= 120
+              assert all(type(r[k]) in (int,float) and math.isfinite(r[k]) for k in ['lat','lon'])
+              assert abs(r['lat']) <= 90 and abs(r['lon']) <= 180
+              assert r['status'] in ['unknown','active','dry','repair','seasonal','removed']
+              assert date.fromisoformat(r['observed_on']) <= date.today() + timedelta(days=1)
+              if r.get('reopens_on'):
+                  date.fromisoformat(r['reopens_on'])
+                  assert re.match(r'^https?://', r.get('reopening_source',''))
+              assert re.fullmatch(r'images/community/[a-zA-Z0-9_-]+\.(jpg|jpeg|png|webp)', r['photo'])
+              path = Path(r['photo']).resolve()
+              assert path.is_relative_to(root) and path.is_file() and path.stat().st_size <= 2 * 1024 * 1024
+              with Image.open(path) as image:
+                  assert image.format in ['JPEG','PNG','WEBP']
+                  assert image.width * image.height <= 10000000
+                  assert not image.getexif(), 'Remove EXIF before publication'
+                  image.verify()
+          print('Validated', len(seen), 'approved records; no automatic issue import')
+          PY
+      - name: Integrate reporting and refresh cache
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          p = Path('index.html')
+          text = p.read_text()
+          if 'src="./community.js"' not in text:
+              text = text.replace('</body>', '<script src="./community.js"></script></body>')
+          p.write_text(text)
+          p = Path('sw.js')
+          text = re.sub(r"const CACHE='[^']+';", "const CACHE='aqualume-community-v9';", p.read_text(), count=1)
+          if "'./community.js'" not in text:
+              text = text.replace("const ASSETS=[", "const ASSETS=['./community.js','./data/community.json',", 1)
+          p.write_text(text)
+          PY
+          node --check sw.js
+      - name: Commit interface integration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html sw.js
+          if ! git diff --cached --quiet; then
+            git commit -m 'Integrate moderated community reporting UI'
+            git push origin HEAD:main
+          fi
+      - name: Request Pages build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST repos/${{ github.repository }}/pages/builds

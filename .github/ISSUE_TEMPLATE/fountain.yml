@@ -1,0 +1,92 @@
+name: Brunnen melden oder Status aktualisieren
+description: Nur mit Foto und Koordinaten; Veröffentlichung erst nach Prüfung.
+title: '[Brunnen] '
+body:
+  - type: markdown
+    attributes:
+      value: 'Öffentliche GitHub-Meldung: Foto, Koordinaten und dein GitHub-Name sind sichtbar. Keine Gesichter, Kennzeichen oder privaten Wohnorte zeigen. Metadaten vor dem Upload entfernen. Ein Foto beweist keine Trinkwasserqualität. Kein Notfallkanal. GitHub-Konto erforderlich.'
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Meldungsart
+      options: ['Neuer Brunnen', 'Statuskorrektur']
+    validations:
+      required: true
+  - type: input
+    id: reference
+    attributes:
+      label: Bestehender Eintrag
+      description: 'Falls vorhanden: node/123, way/123 oder Community-Issue-Nummer.'
+  - type: input
+    id: name
+    attributes:
+      label: Brunnenname oder Beschreibung
+    validations:
+      required: true
+  - type: dropdown
+    id: country
+    attributes:
+      label: Land
+      options: [AT, NL]
+    validations:
+      required: true
+  - type: input
+    id: lat
+    attributes:
+      label: Breitengrad
+      description: 'WGS84 Dezimalgrad, beispielsweise 47.2692. Kartenposition ist nicht automatisch GPS.'
+    validations:
+      required: true
+  - type: input
+    id: lon
+    attributes:
+      label: Längengrad
+      description: 'WGS84 Dezimalgrad, beispielsweise 11.4041.'
+    validations:
+      required: true
+  - type: upload
+    id: photo
+    attributes:
+      label: Pflichtfoto des Brunnens
+      description: 'Eigenes Foto ohne sensible Inhalte und ohne private EXIF-Daten.'
+    validations:
+      required: true
+      accept: '.jpg,.jpeg,.png,.webp'
+  - type: dropdown
+    id: status
+    attributes:
+      label: Beobachteter Betriebsstatus
+      options: ['Unbekannt', 'Aktiv / Wasser läuft', 'Trocken', 'Defekt / Reparatur', 'Saisonal geschlossen', 'Dauerhaft entfernt']
+    validations:
+      required: true
+  - type: input
+    id: observed
+    attributes:
+      label: Beobachtet am
+      description: 'YYYY-MM-DD. Nicht das Datum einer Vermutung.'
+    validations:
+      required: true
+  - type: input
+    id: reopening
+    attributes:
+      label: Gemeldete Wiederöffnung
+      description: 'Optional YYYY-MM-DD; leer lassen, wenn unbekannt.'
+  - type: input
+    id: evidence
+    attributes:
+      label: Quelle zum Wiederöffnungstermin
+      description: 'Bei einem Termin erforderlich: öffentliche Betreiber-URL oder Foto eines Hinweisschilds.'
+  - type: textarea
+    id: notes
+    attributes:
+      label: Weitere Hinweise
+      description: 'Zugang, Flaschenbefüllung, Schild mit Trinkwasserhinweis, saisonale Einschränkungen.'
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Einverständnis
+      options:
+        - label: 'Ich darf das Foto veröffentlichen und erlaube Aqualume dessen Anzeige; keine Rechte Dritter werden verletzt.'
+          required: true
+        - label: 'Ich verstehe, dass diese Meldung öffentlich ist, geprüft werden muss und keine Trinkwasserfreigabe darstellt.'
+          required: true
