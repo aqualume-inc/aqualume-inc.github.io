@@ -1,0 +1,94 @@
+name: Netherlands basemap pilot - no live deployment
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/nl-basemap-pilot.yml']
+permissions:
+  contents: read
+concurrency:
+  group: nl-basemap-pilot
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated workspace
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/nl-basemap"
+          df -h "$RUNNER_TEMP"
+      - name: Record builder image
+        shell: bash
+        run: |
+          docker pull ghcr.io/onthegomap/planetiler:latest
+          docker image inspect ghcr.io/onthegomap/planetiler:latest --format '{{json .RepoDigests}}' > "$RUNNER_TEMP/nl-basemap/builder-image.json"
+      - name: Build Netherlands vector basemap
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 2100s docker run --rm \
+            -e JAVA_TOOL_OPTIONS=-Xmx3g \
+            -v "$RUNNER_TEMP/nl-basemap:/data" \
+            ghcr.io/onthegomap/planetiler:latest \
+            --download --area=netherlands --maxzoom=14 \
+            --output=/data/netherlands.pmtiles --force \
+            2>&1 | tee "$RUNNER_TEMP/nl-basemap/build.log"
+      - name: Validate candidate archive
+        shell: bash
+        run: |
+          python - <<'PY'
+          import gzip, hashlib, json, os, struct
+          from datetime import datetime, timezone
+          from pathlib import Path
+          folder = Path(os.environ['RUNNER_TEMP']) / 'nl-basemap'
+          path = folder / 'netherlands.pmtiles'
+          size = path.stat().st_size
+          if not 127 < size <= 850 * 1024 * 1024:
+              raise SystemExit('Candidate is empty or exceeds the 850 MiB pilot budget; no deployment')
+          with path.open('rb') as f:
+              header = f.read(127)
+              if header[:7] != b'PMTiles' or header[7] != 3:
+                  raise SystemExit('Expected a PMTiles v3 archive')
+              offset, length = struct.unpack_from('<QQ', header, 24)
+              if length > 16 * 1024 * 1024 or offset + length > size:
+                  raise SystemExit('Invalid or oversized metadata')
+              f.seek(offset)
+              raw = f.read(length)
+          if header[97] == 2:
+              raw = gzip.decompress(raw)
+          elif header[97] != 1:
+              raise SystemExit('Metadata compression needs separate verification')
+          metadata = json.loads(raw)
+          layers = [layer['id'] for layer in metadata.get('vector_layers', [])]
+          if 'building' not in layers or not any(name in layers for name in ['transportation', 'roads']):
+              raise SystemExit('Expected building and road layers are missing')
+          digest = hashlib.sha256()
+          with path.open('rb') as f:
+              for block in iter(lambda: f.read(1024 * 1024), b''):
+                  digest.update(block)
+          manifest = {'region': 'Netherlands regional extract', 'generated_at': datetime.now(timezone.utc).isoformat(), 'bytes': size, 'sha256': digest.hexdigest(), 'requested_maxzoom': 14, 'layers': layers, 'source': 'OpenStreetMap-derived basemap built with Planetiler and its upstream sources', 'attribution_required': True, 'publication_status': 'candidate_only_not_live', 'limitations': ['Not browser-tested', 'Not a complete EU basemap', 'Regional export boundaries may not equal political boundaries', 'No external map API key configured', 'Style, fonts, sprites and HTTP Range delivery still require integration and testing']}
+          (folder / 'manifest.json').write_text(json.dumps(manifest, indent=2))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('## Netherlands pilot candidate\n\nSize: ' + str(round(size / 1024 / 1024, 1)) + ' MiB\n\nRoad and building layers present. No live deployment or repository tile commit. Browser, style and delivery checks remain pending.\n')
+          PY
+      - name: Store validated candidate for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: nl-basemap-candidate
+          path: |
+            ${{ runner.temp }}/nl-basemap/netherlands.pmtiles
+            ${{ runner.temp }}/nl-basemap/manifest.json
+            ${{ runner.temp }}/nl-basemap/builder-image.json
+          if-no-files-found: error
+          retention-days: 1
+      - name: Store build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nl-basemap-build-log
+          path: ${{ runner.temp }}/nl-basemap/build.log
+          if-no-files-found: warn
+          retention-days: 1
