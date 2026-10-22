@@ -1,0 +1,90 @@
+name: Integrate fountain menu and local profiles
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['fountain-menu.js', 'fountain-menu.css', '.github/workflows/fountain-menu.yml']
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: water-data
+  cancel-in-progress: false
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Connect explicit fountain actions
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          p = Path('glass.js')
+          js = p.read_text()
+          if 'window.AqualumeRoute=route;' not in js:
+              assert 'function point(p){' in js, 'Unexpected marker module'
+              js = js.replace('function point(p){', 'window.AqualumeRoute=route;\nfunction point(p){', 1)
+          old = "marker.on('click',()=>route(p));return marker"
+          new = "marker.on('click',()=>window.AqualumeMenu?window.AqualumeMenu.open(p):route(p));return marker"
+          assert old in js or new in js, 'Marker click handler changed; review required'
+          js = js.replace(old, new, 1)
+          p.write_text(js)
+          p = Path('community.js')
+          js = p.read_text()
+          anchor = "const add=document.createElement('button');add.textContent='+ Brunnen melden';"
+          if 'window.AqualumeReport=openReport;' not in js:
+              assert anchor in js, 'Unexpected community module'
+              js = js.replace(anchor, 'window.AqualumeReport=openReport;\n' + anchor, 1)
+          p.write_text(js)
+          p = Path('eu-3d.mjs')
+          js = p.read_text()
+          old = "properties:{name:p.tags?.name||'Trinkwasserstelle',lat:p.lat,lon:p.lon}"
+          new = "properties:{id:String(p.id),osm_type:p.type,name:p.tags?.name||'Trinkwasserstelle',lat:p.lat,lon:p.lon}"
+          assert old in js or new in js, 'Unexpected 3D feature schema'
+          js = js.replace(old, new, 1)
+          old = "else{const wrap=document.createElement('div');"
+          new = "else{const selected=spots.find(p=>String(p.id)===String(f.properties.id)&&p.type===f.properties.osm_type);if(selected&&window.AqualumeMenu){window.AqualumeMenu.open(selected);return}const wrap=document.createElement('div');"
+          assert old in js or new in js, 'Unexpected 3D popup handler'
+          if 'const selected=spots.find' not in js:
+              js = js.replace(old, new, 1)
+          p.write_text(js)
+          p = Path('index.html')
+          html = p.read_text()
+          if 'href="./fountain-menu.css"' not in html:
+              html = html.replace('</head>', '<link rel="stylesheet" href="./fountain-menu.css"></head>')
+          if 'src="./fountain-menu.js"' not in html:
+              html = html.replace('</body>', '<script src="./fountain-menu.js"></script></body>')
+          p.write_text(html)
+          p = Path('sw.js')
+          js = re.sub(r"const CACHE='[^']+';", "const CACHE='aqualume-menu-v10';", p.read_text(), count=1)
+          if "'./fountain-menu.js'" not in js:
+              js = js.replace('const ASSETS=[', "const ASSETS=['./fountain-menu.js','./fountain-menu.css',", 1)
+          p.write_text(js)
+          PY
+      - name: Validate JavaScript before integration commit
+        run: |
+          node --check fountain-menu.js
+          node --check glass.js
+          node --check community.js
+          node --check eu-3d.mjs
+          node --check sw.js
+      - name: Commit integration
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add glass.js community.js eu-3d.mjs index.html sw.js
+          if ! git diff --cached --quiet; then
+            git commit -m 'Connect liquid-glass fountain menu to 2D and 3D markers'
+            git push origin HEAD:main
+          fi
+      - name: Request Pages build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST repos/${{ github.repository }}/pages/builds
