@@ -1,1 +1,1 @@
-{"checked_at":"2026-10-27T04:55:28.101352+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-10-27T04:55:28.101352+00:00","count":2294,"errors":[]}
+{"checked_at":"2026-10-28T05:05:14.195755+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-10-28T05:05:14.195755+00:00","count":2143,"errors":["https://overpass-api.de/api/interpreter attempt 1: HTTPError: HTTP Error 502: Bad Gateway"]}
