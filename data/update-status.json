@@ -1,1 +1,1 @@
-{"checked_at":"2026-10-30T05:06:28.038863+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-10-30T05:06:28.038863+00:00","count":2294,"errors":[]}
+{"checked_at":"2026-10-31T05:04:01.421384+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-10-31T05:04:01.421384+00:00","count":2294,"errors":["https://overpass-api.de/api/interpreter attempt 1: HTTPError: HTTP Error 502: Bad Gateway","https://overpass.kumi.systems/api/interpreter attempt 1: ValueError: Suspicious result: 0 records; minimum 1376"]}
