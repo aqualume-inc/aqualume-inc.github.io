@@ -1,1 +1,1 @@
-{"checked_at":"2026-11-01T05:09:40.775362+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-11-01T05:09:40.775362+00:00","count":2295,"errors":[]}
+{"checked_at":"2026-11-02T05:25:09.416602+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-11-02T05:25:09.416602+00:00","count":2295,"errors":["https://overpass-api.de/api/interpreter attempt 1: HTTPError: HTTP Error 502: Bad Gateway","https://overpass.kumi.systems/api/interpreter attempt 1: TimeoutError: The read operation timed out"]}
