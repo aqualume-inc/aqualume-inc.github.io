@@ -1,1 +1,1 @@
-{"checked_at":"2026-11-03T05:17:08.876430+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-11-03T05:17:08.876430+00:00","count":2295,"errors":["https://overpass-api.de/api/interpreter attempt 1: HTTPError: HTTP Error 502: Bad Gateway","https://overpass.kumi.systems/api/interpreter attempt 1: HTTPError: HTTP Error 504: Gateway Timeout"]}
+{"checked_at":"2026-11-04T05:20:08.302678+00:00","refreshed":true,"using_previous":false,"data_generated_at":"2026-11-04T05:20:08.302678+00:00","count":2295,"errors":[]}
